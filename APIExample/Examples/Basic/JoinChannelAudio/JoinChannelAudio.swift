@@ -1,0 +1,475 @@
+//
+//  JoinChannelAudioMain.swift
+//  APIExample
+//
+//  Created by ADMIN on 2020/5/18.
+//  Copyright © 2020 Agora Corp. All rights reserved.
+//
+
+import UIKit
+import AgoraRtcKit
+import AGEVideoLayout
+
+class JoinChannelAudioEntry: UIViewController {
+    @IBOutlet weak var joinButton: AGButton!
+    @IBOutlet weak var channelTextField: AGTextField!
+    @IBOutlet weak var scenarioBtn: UIButton!
+    @IBOutlet weak var profileBtn: UIButton!
+    var profile: AgoraAudioProfile = .default
+    var scenario: AgoraAudioScenario = .default
+    let identifier = "JoinChannelAudio"
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        profileBtn.setTitle("\(profile.description())", for: .normal)
+        scenarioBtn.setTitle("\(scenario.description())", for: .normal)
+    }
+    
+    @IBAction func doJoinPressed(sender: AGButton) {
+        guard let channelName = channelTextField.text else { return }
+        // resign channel text field
+        channelTextField.resignFirstResponder()
+        
+        let storyBoard: UIStoryboard = UIStoryboard(name: identifier, bundle: nil)
+        // create new view controller every time to ensure we get a clean vc
+        guard let newViewController = storyBoard.instantiateViewController(withIdentifier: identifier) as? BaseViewController else { return
+        }
+        newViewController.title = channelName
+        newViewController.configs = ["channelName": channelName,
+                                     "audioProfile": profile,
+                                     "audioScenario": scenario]
+        navigationController?.pushViewController(newViewController, animated: true)
+    }
+    
+    func getAudioProfileAction(_ profile: AgoraAudioProfile) -> UIAlertAction {
+        return UIAlertAction(title: "\(profile.description())", style: .default, handler: { [unowned self] _ in
+            self.profile = profile
+            self.profileBtn.setTitle("\(profile.description())", for: .normal)
+        })
+    }
+    
+    func getAudioScenarioAction(_ scenario: AgoraAudioScenario) -> UIAlertAction {
+        return UIAlertAction(title: "\(scenario.description())", style: .default, handler: { [unowned self] _ in
+            self.scenario = scenario
+            self.scenarioBtn.setTitle("\(scenario.description())", for: .normal)
+        })
+    }
+    
+    @IBAction func setAudioProfile() {
+        let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
+        let alert = UIAlertController(title: "Set Audio Profile".localized,
+                                      message: nil,
+                                      preferredStyle: style)
+        for profile in AgoraAudioProfile.allValues() {
+            alert.addAction(getAudioProfileAction(profile))
+        }
+        alert.addCancelAction()
+        present(alert, animated: true, completion: nil)
+    }
+    
+    @IBAction func setAudioScenario() {
+        let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
+        let alert = UIAlertController(title: "Set Audio Scenario".localized,
+                                      message: nil,
+                                      preferredStyle: style)
+        for scenario in AgoraAudioScenario.allValues() {
+            alert.addAction(getAudioScenarioAction(scenario))
+        }
+        alert.addCancelAction()
+        present(alert, animated: true, completion: nil)
+    }
+}
+
+class JoinChannelAudioMain: BaseViewController {
+    var agoraKit: AgoraRtcEngineKit!
+    @IBOutlet weak var container: AGEVideoContainer!
+    @IBOutlet weak var recordingVolumeSlider: UISlider!
+    @IBOutlet weak var playbackVolumeSlider: UISlider!
+    @IBOutlet weak var inEarMonitoringSwitch: UISwitch!
+    @IBOutlet weak var inEarMonitoringVolumeSlider: UISlider!
+    @IBOutlet weak var scenarioBtn: UIButton!
+    @IBOutlet weak var mixedButton: UIButton?
+    @IBOutlet weak var relayChannelTextField: UITextField?
+    @IBOutlet weak var timerLabel: UILabel!
+    @IBOutlet weak var timerBtn: UIButton!
+   // Reference to the UILabel for timer display
+       var timer: Timer?
+       var secondsElapsed: Int = 0
+       var isRecording: Bool = false  // Track recording state
+        
+    var audioViews: [UInt: VideoView] = [:]
+    var storagePath: String {
+        let documentPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first
+        return documentPath ?? ""
+    }
+    // indicate if current instance has joined channel
+    var isJoined: Bool = false
+    
+    private var mixerUid: UInt = 0
+    
+ 
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        timerLabel.text = "00:00:00"
+        guard let channelName = configs["channelName"] as? String,
+            let audioProfile = configs["audioProfile"] as? AgoraAudioProfile,
+            let audioScenario = configs["audioScenario"] as? AgoraAudioScenario
+            else { return }
+        
+        mixedButton?.setTitle("Start Audio Mixing".localized, for: .normal)
+        mixedButton?.setTitle("Stop Audio Mixing".localized, for: .selected)
+        
+        scenarioBtn.setTitle("\(audioScenario.description())", for: .normal)
+
+        // set up agora instance when view loaded
+        let config = AgoraRtcEngineConfig()
+        config.appId = KeyCenter.AppId
+        config.areaCode = GlobalSettings.shared.area
+        config.channelProfile = .liveBroadcasting
+        // set audio scenario
+        config.audioScenario = audioScenario
+        agoraKit = AgoraRtcEngineKit.sharedEngine(with: config, delegate: self)
+        // Configuring Privatization Parameters
+        Util.configPrivatization(agoraKit: agoraKit)
+        
+        agoraKit.setLogFile(LogUtils.sdkLogPath())
+        
+        // make myself a broadcaster
+        agoraKit.setClientRole(GlobalSettings.shared.getUserRole())
+        
+        // disable video module
+        agoraKit.disableVideo()
+        
+        agoraKit.enableAudio()
+        
+        let resolution = (GlobalSettings.shared.getSetting(key: "resolution")?.selectedOption().value as? CGSize) ?? .zero
+        let fps = (GlobalSettings.shared.getSetting(key: "fps")?.selectedOption().value as? AgoraVideoFrameRate) ?? .fps15
+        let orientation = (GlobalSettings.shared.getSetting(key: "orientation")?
+            .selectedOption().value as? AgoraVideoOutputOrientationMode) ?? .fixedPortrait
+        agoraKit.setVideoEncoderConfiguration(AgoraVideoEncoderConfiguration(size: resolution,
+                                                                             frameRate: fps,
+                                                                             bitrate: AgoraVideoBitrateStandard,
+                                                                             orientationMode: orientation,
+                                                                             mirrorMode: .auto))
+        
+        // set audio profile
+        agoraKit.setAudioProfile(audioProfile)
+        
+        // Set audio route to speaker
+        agoraKit.setDefaultAudioRouteToSpeakerphone(true)
+        
+        // enable volume indicator
+        agoraKit.enableAudioVolumeIndication(200, smooth: 3, reportVad: true)
+        
+        recordingVolumeSlider.maximumValue = 400
+        recordingVolumeSlider.minimumValue = 0
+        recordingVolumeSlider.integerValue = 100
+        
+        playbackVolumeSlider.maximumValue = 400
+        playbackVolumeSlider.minimumValue = 0
+        playbackVolumeSlider.integerValue = 100
+        
+        inEarMonitoringVolumeSlider.maximumValue = 100
+        inEarMonitoringVolumeSlider.minimumValue = 0
+        inEarMonitoringVolumeSlider.integerValue = 100
+        
+        // start joining channel
+        // 1. Users can only see each other after they join the
+        // same channel successfully using the same app id.
+        // 2. If app certificate is turned on at dashboard, token is needed
+        // when joining channel. The channel name and uid used to calculate
+        // the token has to match the ones used for channel join
+        let option = AgoraRtcChannelMediaOptions()
+        option.publishCameraTrack = false
+        option.publishMicrophoneTrack = true
+        option.clientRoleType = GlobalSettings.shared.getUserRole()
+        
+        NetworkManager.shared.generateToken(channelName: channelName, success: { token in
+            let result = self.agoraKit.joinChannel(byToken: token, channelId: channelName, uid: 0, mediaOptions: option)
+            if result != 0 {
+                // Usually happens with invalid parameters
+                // Error code description can be found at:
+                // en: https://api-ref.agora.io/en/video-sdk/ios/4.x/documentation/agorartckit/agoraerrorcode
+                // cn: https://doc.shengwang.cn/api-ref/rtc/ios/error-code
+                self.showAlert(title: "Error", message: "joinChannel call failed: \(result), please check your params")
+            }
+        })
+    }
+    
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // 关闭耳返
+        agoraKit.enable(inEarMonitoring: false)
+        agoraKit.disableAudio()
+        agoraKit.disableVideo()
+        if isJoined {
+            agoraKit.leaveChannel { (stats) -> Void in
+                LogUtils.log(message: "left channel, duration: \(stats.duration)", level: .info)
+            }
+        }
+    }
+    
+    func sortedViews() -> [VideoView] {
+        return Array(audioViews.values).sorted(by: { $0.uid < $1.uid })
+    }
+    @IBAction func setAudioScenario(_ sender: Any) {
+        let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
+        let alert = UIAlertController(title: "Set Audio Scenario".localized,
+                                      message: nil,
+                                      preferredStyle: style)
+        for scenario in AgoraAudioScenario.allValues() {
+            alert.addAction(getAudioScenarioAction(scenario))
+        }
+        alert.addCancelAction()
+        present(alert, animated: true, completion: nil)
+    }
+    
+    func getAudioScenarioAction(_ scenario: AgoraAudioScenario) -> UIAlertAction {
+        return UIAlertAction(title: "\(scenario.description())", style: .default, handler: { [unowned self] _ in
+            self.agoraKit.setAudioScenario(scenario)
+            self.scenarioBtn.setTitle("\(scenario.description())", for: .normal)
+        })
+    }
+    
+    @IBAction func onChangeRecordingVolume(_ sender: UISlider) {
+        let value: Int = Int(sender.value)
+        print("adjustRecordingSignalVolume \(value)")
+        agoraKit.adjustRecordingSignalVolume(value)
+    }
+    
+    @IBAction func onChangePlaybackVolume(_ sender: UISlider) {
+        let value: Int = Int(sender.value)
+        print("adjustPlaybackSignalVolume \(value)")
+        agoraKit.adjustPlaybackSignalVolume(value)
+    }
+    
+    @IBAction func toggleInEarMonitoring(_ sender: UISwitch) {
+        inEarMonitoringVolumeSlider.isEnabled = sender.isOn
+        agoraKit.enable(inEarMonitoring: sender.isOn)
+    }
+    
+    @IBAction func onChangeInEarMonitoringVolume(_ sender: UISlider) {
+        let value: Int = Int(sender.value)
+        print("setInEarMonitoringVolume \(value)")
+        agoraKit.setInEarMonitoringVolume(value)
+    }
+    
+    @IBAction func timerBtnTapped(_ sender: UIButton) {
+        var path: String? = nil
+      
+        let tempPath = NSTemporaryDirectory() as String
+       
+        
+        if isRecording {
+            do {
+                print("Stopping recording...")
+                try agoraKit.stopAudioRecording() // `try` in case stopAudioRecording throws an error
+                timerBtn.setTitle("Start", for: .normal)
+
+                // Stop Timer
+                isRecording = false
+                timer?.invalidate()
+                timer = nil
+             
+                updateLabel()
+
+                print("Recording stopped.")
+                print("Recording saved at: \(tempPath ?? "Unknown path")")
+
+            } catch {
+                print("Error stopping recording: \(error.localizedDescription)")
+            }
+
+        } else {
+            do {
+                
+                let audioRecordingConfig = AgoraAudioRecordingConfiguration()
+                audioRecordingConfig.filePath = tempPath // Change to actual path
+                audioRecordingConfig.sampleRate = 48000
+                audioRecordingConfig.recordingChannel = 2
+                audioRecordingConfig.fileRecordOption = .mic
+
+                let startResult = agoraKit.startAudioRecording(withConfig: audioRecordingConfig)
+                if startResult != 0 {
+                    print("Error starting recording: Code \(startResult)")
+                }
+                else{
+                    timerBtn.setTitle("Stop", for: .normal)
+                    
+                    // Start Timer
+                    isRecording = true
+                    secondsElapsed = 0
+                    updateLabel()
+                    
+                    timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                        self.secondsElapsed += 1
+                        self.updateLabel()
+                    }
+                    
+                    print("Recording started.")
+                }
+               }catch {
+                print("Error starting recording: \(error.localizedDescription)")
+            }
+        }
+    }
+
+
+    // Function to update the timer label
+    func updateLabel() {
+        let hours = secondsElapsed / 3600
+        let minutes = (secondsElapsed % 3600) / 60
+        let seconds = secondsElapsed % 60
+        let timeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        timerLabel?.text = timeString
+    }
+
+    @IBAction func onAudioMixing(_ sender: UIButton) {
+        guard let channelName = configs["channelName"] as? String,
+              mixerUid > 0,
+              let mixerChannelName = relayChannelTextField?.text,
+              mixerChannelName.isEmpty == false else {return}
+        sender.isSelected.toggle()
+        
+        let uid = mixerUid
+        let connection = AgoraRtcConnection(channelId: mixerChannelName, localUid: Int(uid))
+        if sender.isSelected {
+            let exOpt = AgoraRtcChannelMediaOptions()
+            exOpt.clientRoleType = .broadcaster
+            exOpt.publishMicrophoneTrack = false
+            exOpt.publishMixedAudioTrack = true
+            exOpt.enableAudioRecordingOrPlayout = false
+            exOpt.autoSubscribeAudio = false
+            exOpt.channelProfile = .liveBroadcasting
+            
+            NetworkManager.shared.generateToken(channelName: mixerChannelName, uid: uid) {[weak self] token in
+                guard let self = self, self.mixedButton?.isSelected == true else {return}
+                self.agoraKit.joinChannelEx(byToken: token, connection: connection, delegate: nil, mediaOptions: exOpt) { _, _, _ in
+                    print("join[\(mixerChannelName)] success: \(uid)")
+                    
+                    // add remote audio
+                    let remoteStream = AgoraMixedAudioStream()
+                    remoteStream.sourceType = .remoteChannel
+                    remoteStream.channelId = channelName
+                    
+                    // add local audio
+                    let localStream = AgoraMixedAudioStream()
+                    localStream.sourceType = .microphone
+                    
+                    // mix audio to target channel
+                    let audioMixConfig = AgoraLocalAudioMixerConfiguration()
+                    audioMixConfig.syncWithLocalMic = false
+                    audioMixConfig.audioInputStreams = [remoteStream, localStream]
+                    let ret = self.agoraKit.startLocalAudioMixer(audioMixConfig)
+                    print("startLocalAudioMixer: \(ret)")
+                }
+            }
+        } else {
+            agoraKit.stopLocalAudioMixer()
+            agoraKit.leaveChannelEx(connection)
+        }
+    }
+}
+
+/// agora rtc engine delegate events
+extension JoinChannelAudioMain: AgoraRtcEngineDelegate {
+    /// callback when warning occured for agora sdk, warning can usually be ignored, still it's nice to check out
+    /// what is happening
+    /// Warning code description can be found at:
+    /// en: https://api-ref.agora.io/en/voice-sdk/ios/3.x/Constants/AgoraWarningCode.html
+    /// cn: https://docs.agora.io/cn/Voice/API%20Reference/oc/Constants/AgoraWarningCode.html
+    /// @param warningCode warning code of the problem
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurWarning warningCode: AgoraWarningCode) {
+        LogUtils.log(message: "warning: \(warningCode.description)", level: .warning)
+    }
+    
+    /// callback when error occured for agora sdk, you are recommended to display the error descriptions on demand
+    /// to let user know something wrong is happening
+    /// Error code description can be found at:
+    /// en: https://api-ref.agora.io/en/video-sdk/ios/4.x/documentation/agorartckit/agoraerrorcode
+    /// cn: https://doc.shengwang.cn/api-ref/rtc/ios/error-code
+    /// @param errorCode error code of the problem
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
+        LogUtils.log(message: "error: \(errorCode)", level: .error)
+        self.showAlert(title: "Error", message: "Error \(errorCode.description) occur")
+    }
+    
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
+        self.isJoined = true
+        LogUtils.log(message: "Join \(channel) with uid \(uid) elapsed \(elapsed)ms", level: .info)
+        mixerUid = uid + 1
+        // set up local audio view, this view will not show video but just a placeholder
+        let view = Bundle.loadVideoView(type: .local, audioOnly: true)
+        self.audioViews[0] = view
+        view.setPlaceholder(text: self.getAudioLabel(uid: uid, isLocal: true))
+        self.container.layoutStream3x2(views: self.sortedViews())
+    }
+    
+    /// callback when a remote user is joinning the channel, note audience in live broadcast mode will NOT trigger this event
+    /// @param uid uid of remote joined user
+    /// @param elapsed time elapse since current sdk instance join the channel in ms
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
+        LogUtils.log(message: "remote user join: \(uid) \(elapsed)ms", level: .info)
+
+        // set up remote audio view, this view will not show video but just a placeholder
+        let view = Bundle.loadVideoView(type: .remote, audioOnly: true)
+        view.uid = uid
+        self.audioViews[uid] = view
+        view.setPlaceholder(text: self.getAudioLabel(uid: uid, isLocal: false))
+        self.container.layoutStream3x2(views: sortedViews())
+        self.container.reload(level: 0, animated: true)
+    }
+    
+    /// callback when a remote user is leaving the channel, note audience in live broadcast mode will NOT trigger this event
+    /// @param uid uid of remote joined user
+    /// @param reason reason why this user left, note this event may be triggered when the remote user
+    /// become an audience in live broadcasting profile
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOfflineOfUid uid: UInt, reason: AgoraUserOfflineReason) {
+        LogUtils.log(message: "remote user left: \(uid) reason \(reason)", level: .info)
+        
+        // remove remote audio view
+        self.audioViews.removeValue(forKey: uid)
+        self.container.layoutStream3x2(views: sortedViews())
+        self.container.reload(level: 0, animated: true)
+    }
+    
+    /// Reports which users are speaking, the speakers' volumes, and whether the local user is speaking.
+    /// @params speakers volume info for all speakers
+    /// @params totalVolume Total volume after audio mixing. The value range is [0,255].
+    func rtcEngine(_ engine: AgoraRtcEngineKit, reportAudioVolumeIndicationOfSpeakers speakers: [AgoraRtcAudioVolumeInfo], totalVolume: Int) {
+//        for speaker in speakers {
+//            if let audioView = audioViews[speaker.uid] {
+//                audioView.setInfo(text: "Volume:\(speaker.volume)")
+//            }
+//        }
+    }
+    
+    /// Reports the statistics of the current call. The SDK triggers this callback once every two seconds after the user joins the channel.
+    /// @param stats stats struct
+    func rtcEngine(_ engine: AgoraRtcEngineKit, reportRtcStats stats: AgoraChannelStats) {
+        audioViews[0]?.statsInfo?.updateChannelStats(stats)
+    }
+    
+    /// Reports the statistics of the uploading local audio streams once every two seconds.
+    /// @param stats stats struct
+    func rtcEngine(_ engine: AgoraRtcEngineKit, localAudioStats stats: AgoraRtcLocalAudioStats) {
+        audioViews[0]?.statsInfo?.updateLocalAudioStats(stats)
+    }
+    
+    /// Reports the statistics of the audio stream from each remote user/host.
+    /// @param stats stats struct for current call statistics
+    func rtcEngine(_ engine: AgoraRtcEngineKit, remoteAudioStats stats: AgoraRtcRemoteAudioStats) {
+        audioViews[stats.uid]?.statsInfo?.updateAudioStats(stats)
+    }
+    
+   
+}
+
+extension JoinChannelAudioMain: UITextFieldDelegate {
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        return true
+    }
+}

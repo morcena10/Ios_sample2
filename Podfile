@@ -1,0 +1,43 @@
+# Uncomment the next line to define a global platform for your project
+# platform :ios, '9.0'
+
+#source 'https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git'
+
+def common_pods
+  pod 'AgoraRtcEngine_iOS', '4.5.0'
+  #pod 'sdk', :path => 'sdk.podspec'
+end
+  
+target 'APIExample' do
+  use_frameworks!
+  
+  common_pods
+  
+  pod 'Floaty', '~> 4.2.0'
+  pod 'AGEVideoLayout', '~> 1.0.2'
+  pod 'CocoaAsyncSocket', '7.6.5'
+# 如需测试SDK与三方播放器的”AudioRouter“兼容，可以使用ijkplayer或MobileVLCKit
+#  pod 'ijkplayer', '~> 1.1.3'
+#  pod 'MobileVLCKit', '3.5.1'
+  pod 'SwiftLint', '~> 0.53.0'
+  pod 'SnapKit', '~> 5.7.0'
+
+#  pod 'SenseLib', :path => 'sense.podspec'
+#  pod 'bytedEffect', :path => 'bytedEffect.podspec'
+#  pod 'fuLib', :path => 'fu.podspec'
+end
+
+target 'Agora-ScreenShare-Extension' do
+  use_frameworks!
+  
+  common_pods
+end
+
+target 'SimpleFilter' do
+  use_frameworks!
+  common_pods
+end
+
+pre_install do |installer|
+#  system("sh .download_script.sh 4.5.0 true")
+end
