@@ -25,7 +25,7 @@ class KeyCenter: NSObject {
      进入声网控制台(https://console.agora.io/)，创建一个项目，进入项目配置页，即可看到APP ID。
      */
     @objc
-    static let AppId: String = "9b7b140aed954e53b07455eef7562ce6"
+    static let AppId: String = ""
 
     /**
      Certificate.
@@ -40,7 +40,7 @@ class KeyCenter: NSObject {
      进入声网控制台(https://console.agora.io/)，创建一个带证书鉴权的项目，进入项目配置页，即可看到APP证书。如果项目没有开启证书鉴权，这个字段留空。
      注意：App证书放在客户端不安全，推荐放在服务端以确保 App 证书不会泄露。
      */
-    static let Certificate: String? = "ee4782e2b60f4989aa80f2b6101f7197"
+    static let Certificate: String? = ""
     
     
     static let FaceCaptureLicense: String? = nil
