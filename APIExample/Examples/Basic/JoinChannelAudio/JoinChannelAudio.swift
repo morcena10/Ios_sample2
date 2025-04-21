@@ -107,7 +107,7 @@ class JoinChannelAudioMain: BaseViewController {
     var isJoined: Bool = false
     
     private var mixerUid: UInt = 0
-    
+    var filePath: String? = nil
  
     
     override func viewDidLoad() {
@@ -276,7 +276,7 @@ class JoinChannelAudioMain: BaseViewController {
                 updateLabel()
 
                 print("Recording stopped.")
-                print("Recording saved at: \(tempPath ?? "Unknown path")")
+                print("Recording saved at: \(storagePath ?? "Unknown path")")
 
             } catch {
                 print("Error stopping recording: \(error.localizedDescription)")
@@ -285,15 +285,19 @@ class JoinChannelAudioMain: BaseViewController {
         } else {
             do {
                 
+                filePath = storagePath + "/audio.wav"
+                
                 let audioRecordingConfig = AgoraAudioRecordingConfiguration()
-                audioRecordingConfig.filePath = tempPath // Change to actual path
+                audioRecordingConfig.filePath = filePath
+                audioRecordingConfig.quality = .medium
                 audioRecordingConfig.sampleRate = 48000
                 audioRecordingConfig.recordingChannel = 2
                 audioRecordingConfig.fileRecordOption = .mic
-
+               
                 let startResult = agoraKit.startAudioRecording(withConfig: audioRecordingConfig)
                 if startResult != 0 {
-                    print("Error starting recording: Code \(startResult)")
+                                    print("Error starting recording: Code \(startResult)")
+                                   
                 }
                 else{
                     timerBtn.setTitle("Stop", for: .normal)
@@ -307,8 +311,6 @@ class JoinChannelAudioMain: BaseViewController {
                         self.secondsElapsed += 1
                         self.updateLabel()
                     }
-                    
-                    print("Recording started.")
                 }
                }catch {
                 print("Error starting recording: \(error.localizedDescription)")
